@@ -1,0 +1,317 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TOPANG UNEJ | Monitoring Pohon</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;
+ font-family:Arial,sans-serif;
+ background:#eef3ef;
+ color:#183328
+}
+header{
+ background:#123b2a;
+ color:white;
+ padding:25px 7%;
+}
+header h1{margin:0;font-size:28px}
+.container{max-width:1100px;margin:25px auto;padding:0 16px}
+.top{
+ display:flex;justify-content:space-between;
+ align-items:center;gap:12px;flex-wrap:wrap
+}
+.connection{
+ background:#d9f7e4;color:#167542;
+ padding:10px 15px;border-radius:25px;font-size:12px
+}
+.cards{
+ display:grid;grid-template-columns:repeat(2,1fr);
+ gap:15px;margin-top:20px
+}
+.card{
+ background:white;padding:22px;border-radius:15px;
+ box-shadow:0 3px 12px #0000000c
+}
+.card h3{font-size:12px;color:#718078;margin:0}
+.value{font-size:38px;font-weight:bold;margin:15px 0}
+.green{color:#16834b}
+.red{color:#d93636}
+.status{font-size:27px;font-weight:bold;margin:15px 0}
+.details{
+ display:grid;grid-template-columns:repeat(2,1fr);
+ gap:15px;margin-top:15px
+}
+.detail{padding:12px 0;border-bottom:1px solid #eee;font-size:14px}
+.chart{margin-top:15px}
+.chart canvas{max-height:350px}
+footer{text-align:center;padding:25px;color:#718078;font-size:12px}
+@media(max-width:600px){
+ .cards,.details{grid-template-columns:1fr}
+ header h1{font-size:23px}
+ .value{font-size:32px}
+}
+</style>
+</head>
+
+<body>
+
+<header>
+ <h1>🌳 TOPANG UNEJ</h1>
+</header>
+
+<main class="container">
+
+ <div class="top">
+  <h2>Dashboard Monitoring</h2>
+  <div class="connection" id="connection">● Menghubungkan...</div>
+ </div>
+
+ <section class="cards">
+
+  <div class="card">
+   <h3>SUDUT KEMIRINGAN POHON</h3>
+   <div class="value green">
+    <span id="angle">--</span>°
+   </div>
+   <small>Pengukuran dalam derajat</small>
+  </div>
+
+  <div class="card">
+   <h3>STATUS POHON</h3>
+   <div id="status" class="status">MEMUAT</div>
+   <small>Batas bahaya: 15°</small>
+  </div>
+
+  <div class="card">
+   <h3>STATUS SIRINE</h3>
+   <div id="siren" class="value">--</div>
+   <small>Sirine peringatan 12V</small>
+  </div>
+
+ </section>
+
+ <section class="details">
+
+  <div class="card">
+   <h3>DATA SENSOR MPU6050</h3>
+   <div class="detail">Roll: <b id="roll">--</b>°</div>
+   <div class="detail">Pitch: <b id="pitch">--</b>°</div>
+   <div class="detail">Waktu data: <b id="time">--</b></div>
+  </div>
+
+  <div class="card">
+   <h3>INFORMASI SISTEM</h3>
+   <div class="detail">Sensor: <b id="sensor">Menunggu</b></div>
+   <div class="detail">Cloud: <b id="cloud">Menunggu</b></div>
+   <div class="detail">Channel ID: <b>3592261</b></div>
+  </div>
+
+ </section>
+
+ <section class="card chart">
+  <h3>GRAFIK RIWAYAT KEMIRINGAN POHON</h3>
+  <p><small>Data 60 pembacaan terakhir dari ThingSpeak</small></p>
+  <canvas id="tiltChart"></canvas>
+ </section>
+
+</main>
+
+<footer>
+ TOPANG UNEJ
+ <br>IoT Tree Monitoring System
+</footer>
+
+<script>
+
+// KONFIGURASI THINGSPEAK
+const CHANNEL_ID = "3592261";
+
+const API_URL =
+ `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?results=60`;
+
+// INISIALISASI GRAFIK
+const chart = new Chart(
+ document.getElementById("tiltChart"),
+ {
+  type:"line",
+  data:{
+   labels:[],
+   datasets:[{
+    label:"Kemiringan (°)",
+    data:[],
+    borderColor:"#16834b",
+    backgroundColor:"rgba(22,131,75,0.12)",
+    fill:true,
+    tension:0.3
+   }]
+  },
+  options:{
+   responsive:true,
+   scales:{
+    y:{
+     min:0,
+     max:30,
+     title:{
+      display:true,
+      text:"Sudut (derajat)"
+     }
+    }
+   }
+  }
+ }
+);
+
+// UPDATE DASHBOARD
+async function updateDashboard(){
+
+ try{
+
+  const response = await fetch(API_URL,{
+   cache:"no-store"
+  });
+
+  if(!response.ok) throw new Error("Cloud error");
+
+  const result = await response.json();
+  const feeds = result.feeds;
+
+  if(!feeds || feeds.length===0){
+   throw new Error("Data belum tersedia");
+  }
+
+  // Ambil data terbaru yang lengkap
+  const last = [...feeds].reverse().find(f =>
+   f.field1!==null &&
+   f.field2!==null &&
+   f.field3!==null &&
+   f.field4!==null
+  );
+
+  if(!last) throw new Error("Data sensor kosong");
+
+  const angle = Number(last.field1);
+  const roll = Number(last.field2);
+  const pitch = Number(last.field3);
+  const relay = Number(last.field4);
+
+  if(![angle,roll,pitch,relay].every(Number.isFinite)){
+   throw new Error("Data tidak valid");
+  }
+
+  const timestamp = new Date(last.created_at);
+  const age = (Date.now()-timestamp.getTime())/1000;
+
+  // Periksa apakah data masih baru
+  if(age < -60 || age > 90){
+   throw new Error("Data sensor sudah kedaluwarsa");
+  }
+
+  // STATUS KONEKSI
+  document.getElementById("connection").textContent =
+   "● ONLINE";
+
+  document.getElementById("connection").style.background =
+   "#d9f7e4";
+
+  document.getElementById("connection").style.color =
+   "#167542";
+
+  // DATA SENSOR
+  document.getElementById("angle").textContent =
+   angle.toFixed(2);
+
+  document.getElementById("roll").textContent =
+   roll.toFixed(2);
+
+  document.getElementById("pitch").textContent =
+   pitch.toFixed(2);
+
+  document.getElementById("time").textContent =
+   timestamp.toLocaleString("id-ID");
+
+  // STATUS POHON DAN SIRINE
+  const status = document.getElementById("status");
+
+  if(relay >= 1){
+
+   status.textContent = "BAHAYA!";
+   status.className = "status red";
+
+   document.getElementById("siren").textContent =
+    "MENYALA";
+
+   document.getElementById("siren").className =
+    "value red";
+
+  }else{
+
+   status.textContent = "NORMAL";
+   status.className = "status green";
+
+   document.getElementById("siren").textContent =
+    "MATI";
+
+   document.getElementById("siren").className =
+    "value green";
+
+  }
+
+  document.getElementById("sensor").textContent =
+   "Terbaca";
+
+  document.getElementById("cloud").textContent =
+   "Terhubung";
+
+  // UPDATE GRAFIK
+  const validFeeds = feeds.filter(f =>
+   f.field1!==null &&
+   Number.isFinite(Number(f.field1))
+  );
+
+  chart.data.labels = validFeeds.map(f =>
+   new Date(f.created_at).toLocaleTimeString("id-ID")
+  );
+
+  chart.data.datasets[0].data = validFeeds.map(f =>
+   Number(f.field1)
+  );
+
+  chart.update();
+
+ }catch(error){
+
+  console.error(error);
+
+  document.getElementById("connection").textContent =
+   "● OFFLINE / ERROR";
+
+  document.getElementById("connection").style.background =
+   "#ffebeb";
+
+  document.getElementById("connection").style.color =
+   "#d93636";
+
+  document.getElementById("cloud").textContent =
+   "Tidak terhubung";
+
+  document.getElementById("sensor").textContent =
+   "Data tidak terbaru";
+
+ }
+
+}
+
+// UPDATE SETIAP 5 DETIK
+updateDashboard();
+setInterval(updateDashboard,5000);
+
+</script>
+
+</body>
+</html>
